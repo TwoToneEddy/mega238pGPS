@@ -29,6 +29,7 @@ B5 62 01 02 00 00 03 0A
 #include <Arduino.h>
 
 #include <SoftwareSerial.h>
+#include "LowPower.h"
 
 #define LOOP_DELAY  1000
 //#define GPS_LOCK_MSG_LIMIT  180  
@@ -53,6 +54,7 @@ const unsigned char gpsPOSLLH_CMD[]={0xB5, 0x62, 0x01, 0x02, 0x00, 0x00, 0x03, 0
 const unsigned char UBX_HEADER[] = { 0xB5, 0x62 };
 int gpsConfigured,gpsMessageCounter,gpsLock,gpsPositionRequest,gpsAwake,gpsAwakeCounter,gpsCommsErrorCounter,gpsPortActive;
 int sim800Configured,sim800Comms,sim800PortActive;
+bool useGSM,GSMPassthrough;
 String buffer;
 String locationMessage;
 long lat_con,lon_con;
@@ -301,16 +303,38 @@ void setup()
   gpsPositionRequest = 0;
   gpsAwake = 1;
   gpsCommsErrorCounter = 0;
+
+  //Config
+  useGSM = true;
+  GSMPassthrough = false;
+  
+  //power_all_disable();
+  sim800Port.begin(9600);
 }
 
 void loop() {
 
+  while(GSMPassthrough){
+    if (Serial.available()) {      // If anything comes in Serial (USB),
+
+        sim800Port.write(Serial.read());   // read it and send it out Serial1 (pins 0 & 1)
+
+      }
+
+      if (sim800Port.available()) {     // If anything comes in Serial1 (pins 0 & 1)
+
+        Serial.write(sim800Port.read());   // read it and send it out Serial (USB)
+
+      }
+  }
   
-  if(!sim800Configured){
-    activateSim800Port();
-    delay(100);
-    sim800Configure();
-    sim800Sleep();
+  if(useGSM){
+    if(!sim800Configured){
+      activateSim800Port();
+      delay(100);
+      sim800Configure();
+      sim800Sleep();
+    }
   }
 
   if (!gpsConfigured){
@@ -318,17 +342,19 @@ void loop() {
     delay(100);
     gpsConfigure();
   }
-    
-  activateSim800Port();
-  if(sim800Port.available() && gpsPositionRequest==0){
-    buffer=sim800Port.readString();
-    
-    if(buffer.startsWith("+CMTI:",2)){
-      Serial.println("Got a text message");
-      sendSMS("Got position command, waiting for lock...");
-      gpsPositionRequest = 1;
+
+  if(useGSM){
+    activateSim800Port();
+    if(sim800Port.available() && gpsPositionRequest==0){
+      buffer=sim800Port.readString();
+      
+      if(buffer.startsWith("+CMTI:",2)){
+        Serial.println("Got a text message");
+        sendSMS("Got position command, waiting for lock...");
+        gpsPositionRequest = 1;
+      }
+      sim800Port.flush();
     }
-    sim800Port.flush();
   }
   
   
@@ -365,16 +391,18 @@ void loop() {
       gpsPositionRequest = 0;
       gpsCommsErrorCounter = 0;
       gpsMessageCounter = 0;
-
     }
     // Send GPS coords if accuracy is good enough, timed out or gps lock has been achieved without subsequent sleep
     if(processGPS()&&((posllh.hAcc/1000.0f <= HORIZONTAL_ACC_THRESHOLD)||(gpsMessageCounter>GPS_LOCK_MSG_LIMIT)||(gpsLock==1))){
       gpsLock = 1;
       gpsMessageCounter = 0;
       gpsPositionRequest = 0;
-      activateSim800Port();
 
-      sendPositionSMS();
+      if(useGSM){
+        activateSim800Port();
+        sendPositionSMS();
+      }
+      
       Serial.print("http://maps.google.com/?q=");Serial.print(posllh.lat/10000000.0f,8);Serial.print(",");Serial.print(posllh.lon/10000000.0f,8);Serial.println();
       Serial.println();
       Serial.print(bufferArray);
@@ -399,5 +427,5 @@ void loop() {
 
   
   delay(1000);
-
+  
 }
