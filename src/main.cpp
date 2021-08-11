@@ -36,7 +36,7 @@ B5 62 01 02 00 00 03 0A
 #define GPS_LOCK_MSG_LIMIT  20  
 #define HORIZONTAL_ACC_THRESHOLD  10
 #define STAY_AWAKE_CYCLE 60
-
+#define BUZZER_PIN  10
 
 // Connect the GPS RX/TX to arduino pins 3 and 5
 SoftwareSerial gpsPort = SoftwareSerial(8,9);
@@ -380,6 +380,34 @@ bool processMessage(int index){
     return false;
 }
 
+void playScale(int interval){
+  tone(BUZZER_PIN,440,interval);
+  delay(interval);
+  tone(BUZZER_PIN,466,interval);
+  delay(interval);
+  tone(BUZZER_PIN,493,interval);
+  delay(interval);
+  tone(BUZZER_PIN,523,interval);
+  delay(interval);
+  tone(BUZZER_PIN,554,interval);
+  delay(interval);
+  tone(BUZZER_PIN,587,interval);
+  delay(interval);
+  tone(BUZZER_PIN,622,interval);
+  delay(interval);
+  tone(BUZZER_PIN,659,interval);
+  delay(interval);
+  tone(BUZZER_PIN,698,interval);
+  delay(interval);
+  tone(BUZZER_PIN,739,interval);
+  delay(interval);
+  tone(BUZZER_PIN,784,interval);
+  delay(interval);
+  tone(BUZZER_PIN,830,interval);
+  delay(interval);
+  tone(BUZZER_PIN,880,interval);
+  delay(interval);
+}
 
 
 void setup() 
@@ -425,6 +453,8 @@ void loop() {
       delay(100);
       sim800Configure();
       sim800Sleep();
+      tone(BUZZER_PIN, 440, 50);
+      delay(50);
     }
   }
 
@@ -432,7 +462,12 @@ void loop() {
     activateGpsPort();
     delay(100);
     gpsConfigure();
+    tone(BUZZER_PIN, 880, 50);
+    delay(50);
   }
+
+  
+
 
   if(useGSM){
     activateSim800Port();
@@ -447,6 +482,14 @@ void loop() {
         if(sms.message[0] == 'P'){
           sendSMS("Got position command, waiting for lock...",sms.senderNumber);
           gpsPositionRequest = 1;
+        }
+        if(sms.message[0] == 'R'){
+          playScale(50);
+          playScale(50);
+          playScale(50);
+          playScale(50);
+          playScale(50);
+          playScale(50);
         }
       }
       sim800Port.flush();
