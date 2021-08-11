@@ -53,7 +53,7 @@ const unsigned char gpsWakeCommand[] = {0xB5, 0x62, 0x06, 0x57, 0x08, 0x00, 0x01
 const unsigned char gpsPOSLLH_CMD[]={0xB5, 0x62, 0x01, 0x02, 0x00, 0x00, 0x03, 0x0A};
 const unsigned char UBX_HEADER[] = { 0xB5, 0x62 };
 int gpsConfigured,gpsMessageCounter,gpsLock,gpsPositionRequest,gpsAwake,gpsAwakeCounter,gpsCommsErrorCounter,gpsPortActive;
-int sim800Configured,sim800Comms,sim800PortActive;
+int sim800Configured,sim800Comms,sim800PortActive,newestMsgIndex;
 bool useGSM,GSMPassthrough;
 String buffer;
 String locationMessage;
@@ -61,6 +61,12 @@ long lat_con,lon_con;
 float lat_float,lon_float;
 char bufferArray[64];
 char googlePrefix[]="http://maps.google.com/?q=";
+char catInt[4];
+
+struct MSG_CONTENTS{
+  String senderNumber;
+  String message;
+};
 
 struct NAV_POSLLH {
   unsigned char cls;
@@ -76,6 +82,7 @@ struct NAV_POSLLH {
 };
 
 NAV_POSLLH posllh;
+MSG_CONTENTS sms;
 
 void calcChecksum(unsigned char* CK) {
   memset(CK, 0, 2);
@@ -249,13 +256,14 @@ void sim800Wake(){
   sim800Port.flush();
 }
 
-void sendSMSPrefix(){
+void sendSMSPrefix(String number){
   sim800Wake();
   Serial.println("Sending SMS...");             
   sim800Port.print("AT+CMGF=1\r");                   //Set the module to SMS mode
   delay(100);
-  sim800Port.print("AT+CMGS=\"+447747465192\"\r");  //Your phone number don't forget to include your country code, example +212123456789"
-  //sim800Port.print("AT+CMGS=\"+447835006522\"\r");  //Your phone number don't forget to include your country code, example +212123456789"
+  sim800Port.print("AT+CMGS=\"");
+  sim800Port.print(sms.senderNumber);
+  sim800Port.print("\"\r");
 
   delay(500);
 
@@ -271,14 +279,14 @@ void sendSMSSuffix(){
   sim800Sleep();
 }
 
-void sendSMS(String msg){
-  sendSMSPrefix();
+void sendSMS(String msg, String number){
+  sendSMSPrefix(number);
   sim800Port.print(msg);       //This is the text to send to the phone number, don't make it too long or you have to modify the SoftwareSerial buffer
   sendSMSSuffix();
 }
 
-void sendPositionSMS(){
-  sendSMSPrefix();
+void sendPositionSMS(String number){
+  sendSMSPrefix(number);
   sim800Port.print("http://maps.google.com/?q=");
   sim800Port.print(posllh.lat/10000000.0f,8);
   sim800Port.print(",");
@@ -290,6 +298,89 @@ void sendPositionSMS(){
   sim800Port.print(posllh.vAcc/1000.0f);
   sendSMSSuffix();
 }
+
+int getMostRecentMSGIndex(String rxString){
+  char buf[4];
+  rxString.toCharArray(buf,rxString.length());
+
+  if(isdigit(buf[rxString.length()-4])){
+    sprintf(catInt,"%c%c",buf[rxString.length()-4],buf[rxString.length()-3]);
+  }else{
+    sprintf(catInt,"%c",buf[rxString.length()-3]);
+  }
+
+  return atoi(catInt);
+
+}
+
+bool processMessage(int index){
+
+  char cmd[24];
+  int i = 0;
+  int lineCounter = 0;
+  int numberStart = 0;
+  int numberEnd = 0;
+  int bodyStart = 0;
+  int bodyEnd = 0;
+  String buf;
+  String trash;
+
+  sms.message = "";
+  sms.senderNumber = "";
+
+  sim800Wake();
+  // Get rid of any junk in the buffer
+  if(sim800Port.available())
+    trash = sim800Port.readString();
+  
+
+  sprintf(cmd,"AT+CMGR=%d\r\n",index);
+  sim800Port.print(cmd);
+
+  while(!sim800Port.available());
+  buf=sim800Port.readString();
+
+  // Find start of number by looking for +4
+  while(buf[i] != '+' || buf[i+1] != '4'){
+    i++;
+  }
+  numberStart = i;
+
+  // Find end of number by looking for ,
+  while(buf[i] != ','){
+    i++;
+  }
+  numberEnd = i-1;
+
+  // Create a string for the number
+  for(i = numberStart; i < numberEnd; i++){
+    sms.senderNumber+=buf[i];
+  }
+
+  for(i = 0; i < buf.length(); i ++){
+  
+    if(buf[i]=='\n'){
+      lineCounter ++;
+    }
+    if(lineCounter == 2 && bodyStart == 0){
+      bodyStart = i+1;
+    }
+    if(lineCounter == 3 && bodyEnd == 0){
+      bodyEnd = i-1;
+    }
+  }
+
+  for(i = bodyStart; i < bodyEnd; i++)
+    sms.message += buf[i];
+
+  sim800Sleep();
+  if(sms.senderNumber.length() == 13 and sms.message.length() > 0)
+    return true;
+  else 
+    return false;
+}
+
+
 
 void setup() 
 {
@@ -349,9 +440,14 @@ void loop() {
       buffer=sim800Port.readString();
       
       if(buffer.startsWith("+CMTI:",2)){
+
         Serial.println("Got a text message");
-        sendSMS("Got position command, waiting for lock...");
-        gpsPositionRequest = 1;
+        newestMsgIndex = getMostRecentMSGIndex(buffer);
+        processMessage(newestMsgIndex);
+        if(sms.message[0] == 'P'){
+          sendSMS("Got position command, waiting for lock...",sms.senderNumber);
+          gpsPositionRequest = 1;
+        }
       }
       sim800Port.flush();
     }
@@ -400,7 +496,7 @@ void loop() {
 
       if(useGSM){
         activateSim800Port();
-        sendPositionSMS();
+        sendPositionSMS(sms.senderNumber);
       }
       
       Serial.print("http://maps.google.com/?q=");Serial.print(posllh.lat/10000000.0f,8);Serial.print(",");Serial.print(posllh.lon/10000000.0f,8);Serial.println();
