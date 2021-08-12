@@ -37,6 +37,7 @@ B5 62 01 02 00 00 03 0A
 #define HORIZONTAL_ACC_THRESHOLD  10
 #define STAY_AWAKE_CYCLE 60
 #define BUZZER_PIN  10
+#define EMERGENCY_NUMBER "+447747465192"
 
 // Connect the GPS RX/TX to arduino pins 3 and 5
 SoftwareSerial gpsPort = SoftwareSerial(8,9);
@@ -476,20 +477,36 @@ void loop() {
       
       if(buffer.startsWith("+CMTI:",2)){
 
+
+        tone(BUZZER_PIN, 1760, 50);
         Serial.println("Got a text message");
         newestMsgIndex = getMostRecentMSGIndex(buffer);
-        processMessage(newestMsgIndex);
-        if(sms.message[0] == 'P'){
-          sendSMS("Got position command, waiting for lock...",sms.senderNumber);
+        
+        // Read text message
+        if(!processMessage(newestMsgIndex)){
+          sendSMS("Corrupt sender number, performing GPS request with emergency number",EMERGENCY_NUMBER);
           gpsPositionRequest = 1;
-        }
-        if(sms.message[0] == 'R'){
-          playScale(50);
-          playScale(50);
-          playScale(50);
-          playScale(50);
-          playScale(50);
-          playScale(50);
+        }else{
+          switch (sms.message[0])
+          {
+          case 'P':
+            sendSMS("Got position command, waiting for lock...",sms.senderNumber);
+            gpsPositionRequest = 1;
+            break;
+          case 'R':
+              playScale(50);
+              playScale(50);
+              playScale(50);
+              playScale(50);
+              playScale(50);
+              playScale(50);
+            break;
+        
+          default:
+            sendSMS("Got unknown command, treating as GPS request.",sms.senderNumber);
+            gpsPositionRequest = 1;
+            break;
+          }
         }
       }
       sim800Port.flush();
